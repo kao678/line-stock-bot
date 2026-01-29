@@ -1,184 +1,126 @@
 // ================= BASIC =================
 const express = require("express");
-const axios = require("axios");
-const cheerio = require("cheerio");
 const line = require("@line/bot-sdk");
 const fs = require("fs");
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ================= LINE =================
+const client = new line.Client({
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
+});
+
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-const LINE_TOKEN = process.env.LINE_TOKEN;
-
-const client = new line.Client({ channelAccessToken: LINE_TOKEN });
-
-// ================= FILES =================
+// ================= FILE =================
 const GROUP_FILE = "./groups.json";
-const CLIENT_FILE = "./clients.json"; // ระบบเช่า + คิดเงิน
+const CLIENT_FILE = "./clients.json";
 
-const readJSON = (p, d) => fs.existsSync(p) ? JSON.parse(fs.readFileSync(p)) : d;
-const writeJSON = (p, d) => fs.writeFileSync(p, JSON.stringify(d, null, 2));
+const readJSON = (f, d = []) => {
+  if (!fs.existsSync(f)) return d;
+  return JSON.parse(fs.readFileSync(f));
+};
+const writeJSON = (f, d) =>
+  fs.writeFileSync(f, JSON.stringify(d, null, 2));
 
-// ================= TIME =================
-const nowTime = () => new Date().toTimeString().slice(0,5);
-
-// ================= MARKETS (ทั้งหมด) =================
-const MARKETS = [
-  // ===== ญี่ปุ่น =====
-  { name:"🇯🇵 นิเคอิเช้า", session:"morning", open:"09:00", close:"09:10", result:"09:05", url:"https://www.investing.com/indices/japan-ni225", selector:'[data-test="instrument-price-last"]' },
-  { name:"🇯🇵 นิเคอิบ่าย", session:"afternoon", open:"14:25", close:"14:35", result:"14:30", url:"https://www.investing.com/indices/japan-ni225", selector:'[data-test="instrument-price-last"]' },
-
-  // ===== จีน =====
-  { name:"🇨🇳 จีนเช้า", session:"morning", open:"10:00", close:"10:10", result:"10:05", url:"https://www.investing.com/indices/china-a50", selector:'[data-test="instrument-price-last"]' },
-  { name:"🔥 จีน A50 VIP", session:"vip", open:"10:00", close:"10:10", result:"10:05", url:"https://www.investing.com/indices/china-a50", selector:'[data-test="instrument-price-last"]' },
-
-  // ===== ฮ่องกง =====
-  { name:"🇭🇰 ฮั่งเส็งเช้า", session:"morning", open:"11:00", close:"11:10", result:"11:05", url:"https://www.investing.com/indices/hang-sen-40", selector:'[data-test="instrument-price-last"]' },
-  { name:"🇭🇰 ฮั่งเส็งบ่าย", session:"afternoon", open:"15:00", close:"15:10", result:"15:05", url:"https://www.investing.com/indices/hang-sen-40", selector:'[data-test="instrument-price-last"]' },
-
-  // ===== ยุโรป =====
-  { name:"🇩🇪 เยอรมัน DAX", session:"afternoon", open:"15:30", close:"15:40", result:"15:35", url:"https://www.investing.com/indices/germany-30", selector:'[data-test="instrument-price-last"]' },
-  { name:"🇬🇧 อังกฤษ FTSE", session:"afternoon", open:"15:00", close:"15:10", result:"15:05", url:"https://www.investing.com/indices/uk-100", selector:'[data-test="instrument-price-last"]' },
-
-  // ===== อเมริกา =====
-  { name:"🇺🇸 ดาวโจนส์", session:"vip", open:"20:30", close:"20:40", result:"20:35", url:"https://www.investing.com/indices/us-30", selector:'[data-test="instrument-price-last"]' },
-  { name:"🇺🇸 NASDAQ", session:"vip", open:"20:30", close:"20:40", result:"20:35", url:"https://www.investing.com/indices/nasdaq-composite", selector:'[data-test="instrument-price-last"]' }
-];
-
-// ================= UTILS =================
-const isOpen = (now, m) => now >= m.open && now <= m.close;
-
-const convert = txt => {
-  const n = txt.replace(/[^0-9]/g,"");
-  return { top:n.slice(-3), bottom:n.slice(-2) };
+// ================= MARKET CONFIG =================
+const MARKETS = {
+  morning: { label: "เช้า", color: "#ff5555" },
+  afternoon: { label: "บ่าย", color: "#ffaa00" },
+  vip: { label: "VIP", color: "#7b61ff" }
 };
 
-async function fetchPrice(url, selector){
-  try{
-    const r = await axios.get(url,{headers:{'User-Agent':'Mozilla/5.0'}});
-    const $ = cheerio.load(r.data);
-    return $(selector).first().text().trim();
-  }catch{
-    return null;
+// ================= FLEX RESULT =================
+const resultFlex = (market, results) => ({
+  type: "flex",
+  altText: `📊 ผลหวยหุ้น ${MARKETS[market].label}`,
+  contents: {
+    type: "bubble",
+    hero: {
+      type: "box",
+      layout: "vertical",
+      contents: [
+        {
+          type: "text",
+          text: `ผลหวยหุ้น ${MARKETS[market].label}`,
+          size: "xl",
+          weight: "bold",
+          color: "#ffffff"
+        }
+      ],
+      backgroundColor: MARKETS[market].color,
+      paddingAll: "16px"
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      contents: results.map(r => ({
+        type: "text",
+        text: `• ${r.name} : ${r.up} - ${r.down}`,
+        size: "md"
+      }))
+    }
   }
+});
+
+// ================= AUTO FETCH RESULT =================
+// ❗ เปลี่ยน URL เว็บตรงนี้ภายหลังได้
+async function fetchResult(market) {
+  // ตัวอย่าง MOCK (แทนด้วยเว็บจริง)
+  return [
+    { name: "NIKKEI", up: "508", down: "06" },
+    { name: "HANGSENG", up: "746", down: "57" }
+  ];
 }
 
-// ================= FLEX =================
-const alertFlex = (title,color) => ({
-  type:"flex",
-  altText:title,
-  contents:{
-    type:"bubble",
-    body:{
-      type:"box",
-      layout:"vertical",
-      backgroundColor:"#000000",
-      contents:[{type:"text",text:title,color,weight:"bold",size:"xl"}]
+// ================= AUTO SEND =================
+setInterval(async () => {
+  const groups = readJSON(GROUP_FILE, []);
+  const clients = readJSON(CLIENT_FILE, {});
+
+  for (const market of Object.keys(MARKETS)) {
+    const results = await fetchResult(market);
+
+    for (const gid of groups) {
+      const c = clients[gid];
+      if (!c) continue;
+      if (new Date(c.expire) < new Date()) continue;
+      if (!c.pack.includes(market)) continue;
+
+      await client.pushMessage(gid, resultFlex(market, results));
     }
   }
-});
-
-const resultFlex = (session, list) => ({
-  type:"flex",
-  altText:`🔥 ผล${session}`,
-  contents:{
-    type:"bubble",
-    size:"giga",
-    body:{
-      type:"box",
-      layout:"vertical",
-      backgroundColor:"#000000",
-      contents:[
-        {type:"text",text:`🔥 ผลตลาด ${session.toUpperCase()}`,color:"#FF0033",size:"xl",weight:"bold"},
-        ...list.map(i=>({
-          type:"box",layout:"horizontal",contents:[
-            {type:"text",text:i.name,color:"#AAAAAA",flex:3},
-            {type:"text",text:`${i.top}-${i.bottom}`,color:"#00FFAA",weight:"bold",align:"end",flex:2}
-          ]
-        })),
-        {type:"text",text:`⏰ ${nowTime()}`,size:"xs",color:"#666666",align:"end"}
-      ]
-    }
-  }
-});
-
-// ================= SYSTEM =================
-let buffer = {};
-
-setInterval(async()=>{
-  const now = nowTime();
-  const groups = readJSON(GROUP_FILE,[]);
-  const clients = readJSON(CLIENT_FILE,{});
-
-  for(const m of MARKETS){
-
-    // 🔔 แจ้งเปิดตลาด
-    if(now === m.open){
-      for(const g of groups){
-        if(clients[g]?.active)
-          await client.pushMessage(g, alertFlex(`🔔 เปิดตลาด ${m.name}`,"#00FFAA"));
-      }
-    }
-
-    // 🔔 แจ้งปิดตลาด
-    if(now === m.close){
-      for(const g of groups){
-        if(clients[g]?.active)
-          await client.pushMessage(g, alertFlex(`⛔ ปิดตลาด ${m.name}`,"#FF0033"));
-      }
-    }
-
-    // 🎯 ผล
-    if(isOpen(now,m) && now===m.result){
-      const price = await fetchPrice(m.url,m.selector);
-      if(!price) continue;
-      const r = convert(price);
-      if(!buffer[m.session]) buffer[m.session]=[];
-      buffer[m.session].push({name:m.name,...r});
-    }
-  }
-
-  // 📦 ส่งผลรวม + ตรวจวันหมดอายุ
-  for(const s in buffer){
-    for(const g of groups){
-      const c = clients[g];
-      if(!c || !c.active) continue;
-      if(!c.pack.includes(s)) continue;
-      if(new Date(c.expire) < new Date()){
-        c.active=false;
-        writeJSON(CLIENT_FILE,clients);
-        continue;
-      }
-      await client.pushMessage(g,resultFlex(s,buffer[s]));
-    }
-    buffer[s]=[];
-  }
-},60000);
+}, 60000); // ทุก 1 นาที (ปรับได้)
 
 // ================= WEBHOOK =================
 app.post("/webhook", async (req, res) => {
   const groups = readJSON(GROUP_FILE, []);
+  const clients = readJSON(CLIENT_FILE, {});
 
-  const events = req.body.events || [];
-  for (const e of events) {
-
-    // เก็บ groupId อัตโนมัติ
+  for (const e of req.body.events || []) {
+    // เก็บ groupId
     if (e.source?.type === "group") {
-      const gid = e.source.groupId;
-      if (!groups.includes(gid)) {
-        groups.push(gid);
+      if (!groups.includes(e.source.groupId)) {
+        groups.push(e.source.groupId);
         writeJSON(GROUP_FILE, groups);
-        console.log("➕ บันทึกกลุ่มใหม่", gid);
+
+        // สมัคร trial อัตโนมัติ
+        clients[e.source.groupId] = {
+          pack: ["morning"],
+          expire: new Date(Date.now() + 3 * 86400000) // 3 วัน
+        };
+        writeJSON(CLIENT_FILE, clients);
       }
     }
 
-    // คำสั่งแอดมิน /groupid
+    // /groupid
     if (
       e.type === "message" &&
       e.message.type === "text" &&
-      e.message.text.trim() === "/groupid" &&
-      e.source.type === "group"
+      e.message.text === "/groupid"
     ) {
       await client.replyMessage(e.replyToken, {
         type: "text",
