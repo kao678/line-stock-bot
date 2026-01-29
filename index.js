@@ -160,13 +160,17 @@ setInterval(async()=>{
 app.post("/webhook", async (req, res) => {
   const groups = readJSON(GROUP_FILE, []);
 
-  for (const e of req.body.events || []) {
+  const events = req.body.events || [];
+  for (const e of events) {
 
     // เก็บ groupId อัตโนมัติ
-    if (e.source?.type === "group" && !groups.includes(e.source.groupId)) {
-      groups.push(e.source.groupId);
-      writeJSON(GROUP_FILE, groups);
-      console.log("➕ บันทึกกลุ่มใหม่", e.source.groupId);
+    if (e.source?.type === "group") {
+      const gid = e.source.groupId;
+      if (!groups.includes(gid)) {
+        groups.push(gid);
+        writeJSON(GROUP_FILE, groups);
+        console.log("➕ บันทึกกลุ่มใหม่", gid);
+      }
     }
 
     // คำสั่งแอดมิน /groupid
