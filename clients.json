@@ -1,0 +1,12 @@
+{
+  "GROUP_ID_1": {
+    "pack": ["morning","afternoon"],
+    "expire": "2026-12-31",
+    "active": true
+  },
+  "GROUP_ID_2": {
+    "pack": ["vip"],
+    "expire": "2026-01-31",
+    "active": true
+  }
+}
