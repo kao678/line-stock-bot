@@ -186,7 +186,6 @@ app.post("/webhook",(req,res)=>{
 
   res.sendStatus(200);
 });
-});
 
 app.listen(PORT,()=>console.log("🔥 FULL STOCK BOT RUNNING"));
 );
