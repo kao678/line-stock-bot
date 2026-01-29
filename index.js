@@ -1,99 +1,87 @@
-// ================== IMPORT ==================
+// ===============================
+// FULL STOCK LOTTO LINE BOT
+// Single file | No puppeteer
+// ===============================
+
 const express = require("express");
+const line = require("@line/bot-sdk");
 const axios = require("axios");
 const cheerio = require("cheerio");
-const line = require("@line/bot-sdk");
+const fs = require("fs");
 
-// ================== ENV ==================
-const PORT = process.env.PORT || 3000;
+// ================= CONFIG =================
+const PORT = process.env.PORT || 10000;
 const LINE_TOKEN = process.env.LINE_TOKEN;
 const LINE_SECRET = process.env.LINE_SECRET;
 
-// ================== LINE ==================
+if (!LINE_TOKEN || !LINE_SECRET) {
+  throw new Error("❌ LINE TOKEN / SECRET หาย");
+}
+
 const client = new line.Client({
   channelAccessToken: LINE_TOKEN,
-  channelSecret: LINE_SECRET
+  channelSecret: LINE_SECRET,
 });
 
 const app = express();
 app.use(express.json());
 
-// ================== GROUP ==================
-const GROUPS = new Set();
+// ================= FILE DB =================
+const GROUP_FILE = "./groups.json";
+const CLIENT_FILE = "./clients.json";
 
-// ================== LOTTO LIST (ภาษาไทย) ==================
-const LOTTO = {
-  เช้า: ["นิเคอิ", "ฮั่งเส็ง", "จีน", "ไต้หวัน", "เกาหลี"],
-  บ่าย: ["นิเคอิบ่าย", "ฮั่งเส็งบ่าย", "จีนบ่าย", "สิงคโปร์"],
-  VIP: ["นิเคอิ VIP", "ฮั่งเส็ง VIP", "จีน VIP", "ดาวโจนส์ VIP"]
+const readJSON = (f, d) => {
+  try { return JSON.parse(fs.readFileSync(f)); }
+  catch { return d; }
+};
+const writeJSON = (f, d) =>
+  fs.writeFileSync(f, JSON.stringify(d, null, 2));
+
+// ================= MARKET CONFIG =================
+const MARKETS = {
+  morning: [
+    { name: "นิเคอิ", code: "nikkei" },
+    { name: "ฮั่งเส็ง", code: "hangseng" }
+  ],
+  afternoon: [
+    { name: "จีน", code: "china" },
+    { name: "ฮั่งเส็งบ่าย", code: "hangseng" }
+  ],
+  vip: [
+    { name: "ดาวโจนส์ VIP", code: "dowjones" },
+    { name: "เยอรมัน VIP", code: "germany" }
+  ]
 };
 
-// ================== MAP ชื่อ ↔ คำค้น ==================
-const RESULT_KEYWORD = {
-  "นิเคอิ": "NIKKEI",
-  "ฮั่งเส็ง": "HANG SENG",
-  "จีน": "CHINA",
-  "ไต้หวัน": "TAIWAN",
-  "เกาหลี": "KOREA",
-
-  "นิเคอิบ่าย": "NIKKEI",
-  "ฮั่งเส็งบ่าย": "HANG SENG",
-  "จีนบ่าย": "CHINA",
-  "สิงคโปร์": "SINGAPORE",
-
-  "นิเคอิ VIP": "NIKKEI",
-  "ฮั่งเส็ง VIP": "HANG SENG",
-  "จีน VIP": "CHINA",
-  "ดาวโจนส์ VIP": "DOW JONES"
-};
-
-// ================== SOURCE ==================
+// 🔥 เว็บดึงผล (คุณเปลี่ยน / เพิ่มได้ตรงนี้)
 const SOURCE_URL = "https://thederbyapex.com/huay-live/";
 
-// ================== SCRAPE RESULT (ของจริง) ==================
-async function fetchResultReal(lottoName) {
+// ================= FETCH RESULT =================
+async function fetchResult(code) {
   try {
-    const keyword = RESULT_KEYWORD[lottoName];
-    if (!keyword) return "-";
-
-    const res = await axios.get(SOURCE_URL, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      timeout: 15000
+    const { data } = await axios.get(SOURCE_URL, {
+      timeout: 15000,
+      headers: { "user-agent": "Mozilla/5.0" },
     });
 
-    const $ = cheerio.load(res.data);
-    let result = "-";
+    const $ = cheerio.load(data);
+    let value = "รอผล";
 
     $("table tr").each((_, el) => {
-      const row = $(el).text().replace(/\s+/g, " ").trim();
-      if (row.toUpperCase().includes(keyword)) {
-        const m = row.match(/\d{2,}/);
-        if (m) result = m[0];
+      const t = $(el).text();
+      if (t.toLowerCase().includes(code)) {
+        value = t.replace(/\s+/g, " ").trim();
       }
     });
 
-    return result;
+    return value;
   } catch (e) {
-    console.log("ดึงผลไม่สำเร็จ:", lottoName);
-    return "-";
+    return "ดึงไม่ได้";
   }
 }
 
-// ================== FLEX (ดำ–ทอง) ==================
-async function flexResultReal(title, list) {
-  const rows = [];
-
-  for (const l of list) {
-    const r = await fetchResultReal(l);
-    rows.push({
-      type: "text",
-      text: `• ${l} : ${r}`,
-      color: "#FFFFFF",
-      size: "md",
-      margin: "sm"
-    });
-  }
-
+// ================= FLEX =================
+function resultFlex(title, rows) {
   return {
     type: "flex",
     altText: title,
@@ -113,19 +101,20 @@ async function flexResultReal(title, list) {
             size: "lg",
             color: "#FFD700"
           },
-          {
-            type: "separator",
-            margin: "md",
-            color: "#FFD700"
-          },
-          ...rows,
+          { type: "separator", margin: "md" },
+          ...rows.map(r => ({
+            type: "text",
+            text: `• ${r}`,
+            color: "#FFFFFF",
+            size: "sm",
+            margin: "sm"
+          })),
           {
             type: "text",
-            text: "AUTO RESULT",
+            text: "⏰ อัปเดตอัตโนมัติ | ระบบ VIP",
             size: "xs",
-            color: "#777777",
-            align: "center",
-            margin: "md"
+            color: "#AAAAAA",
+            margin: "lg"
           }
         ]
       }
@@ -133,98 +122,85 @@ async function flexResultReal(title, list) {
   };
 }
 
-// ================== SEND RESULT ==================
-async function sendResult(type) {
-  const flex = await flexResultReal(`📊 ผลหุ้น ${type}`, LOTTO[type]);
-  for (const gid of GROUPS) {
+// ================= SEND RESULT =================
+async function sendResult(session) {
+  const groups = readJSON(GROUP_FILE, []);
+  const clients = readJSON(CLIENT_FILE, {});
+
+  const markets = MARKETS[session];
+  if (!markets) return;
+
+  const rows = [];
+  for (const m of markets) {
+    const r = await fetchResult(m.code);
+    rows.push(`${m.name} : ${r}`);
+  }
+
+  const flex = resultFlex(`📊 ผลหวยหุ้น ${session === "morning" ? "เช้า" : session === "afternoon" ? "บ่าย" : "VIP"}`, rows);
+
+  for (const gid of groups) {
+    const c = clients[gid];
+    if (!c || !c.active) continue;
+    if (new Date(c.expire) < new Date()) {
+      c.active = false;
+      writeJSON(CLIENT_FILE, clients);
+      continue;
+    }
     await client.pushMessage(gid, flex);
   }
 }
 
-// ================== AUTO TIME ==================
+// ================= AUTO TIME =================
 setInterval(() => {
-  const now = new Date().toTimeString().slice(0,5);
+  const h = new Date().getHours();
 
-  if (now === "09:35") sendResult("เช้า");
-  if (now === "14:35") sendResult("บ่าย");
-  if (now === "22:05") sendResult("VIP");
+  if (h === 10) sendResult("morning");
+  if (h === 14) sendResult("afternoon");
+  if (h === 21) sendResult("vip");
 
 }, 60000);
 
-// ================== MENU FLEX ==================
-function menuFlex() {
-  return {
-    type: "flex",
-    altText: "เมนูเลือกตลาด",
-    contents: {
-      type: "bubble",
-      styles: { body: { backgroundColor: "#000000" } },
-      body: {
-        type: "box",
-        layout: "vertical",
-        contents: [
-          {
-            type: "text",
-            text: "เลือกตลาด",
-            weight: "bold",
-            size: "lg",
-            color: "#FFD700"
-          },
-          {
-            type: "button",
-            action: { type: "message", label: "📊 หุ้นเช้า", text: "เช้า" },
-            style: "primary",
-            color: "#FFD700",
-            margin: "md"
-          },
-          {
-            type: "button",
-            action: { type: "message", label: "📊 หุ้นบ่าย", text: "บ่าย" },
-            style: "primary",
-            color: "#FFD700",
-            margin: "sm"
-          },
-          {
-            type: "button",
-            action: { type: "message", label: "👑 VIP", text: "VIP" },
-            style: "primary",
-            color: "#FFD700",
-            margin: "sm"
-          }
-        ]
+// ================= WEBHOOK =================
+app.post("/webhook", async (req, res) => {
+  const groups = readJSON(GROUP_FILE, []);
+  const clients = readJSON(CLIENT_FILE, {});
+
+  for (const e of req.body.events) {
+    // เก็บ groupId
+    if (e.source?.groupId && !groups.includes(e.source.groupId)) {
+      groups.push(e.source.groupId);
+      writeJSON(GROUP_FILE, groups);
+
+      clients[e.source.groupId] = {
+        active: true,
+        expire: "2099-12-31"
+      };
+      writeJSON(CLIENT_FILE, clients);
+    }
+
+    // /groupid
+    if (e.type === "message" && e.message.type === "text") {
+      const text = e.message.text.trim();
+
+      if (text === "/groupid") {
+        await client.replyMessage(e.replyToken, {
+          type: "text",
+          text: `📌 GROUP ID\n${e.source.groupId}`
+        });
+      }
+
+      if (text === "/test") {
+        await client.replyMessage(e.replyToken,
+          resultFlex("🔥 TEST BOT", ["ระบบพร้อมใช้งาน"])
+        );
       }
     }
-  };
-}
-
-// ================== WEBHOOK ==================
-app.post("/webhook", async (req, res) => {
-  for (const e of req.body.events) {
-
-    if (e.source?.groupId) GROUPS.add(e.source.groupId);
-
-    if (e.message?.text === "/menu") {
-      await client.replyMessage(e.replyToken, menuFlex());
-    }
-
-    if (["เช้า", "บ่าย", "VIP"].includes(e.message?.text)) {
-      const flex = await flexResultReal(
-        `📊 ผลหุ้น ${e.message.text}`,
-        LOTTO[e.message.text]
-      );
-      await client.replyMessage(e.replyToken, flex);
-    }
-
-    if (e.message?.text === "/groupid") {
-      await client.replyMessage(e.replyToken, {
-        type: "text",
-        text: `GROUP ID:\n${e.source.groupId}`
-      });
-    }
   }
+
   res.sendStatus(200);
 });
 
-// ================== START ==================
-app.get("/", (_, res) => res.send("🔥 BOT RUNNING"));
-app.listen(PORT, () => console.log("🔥 FULL BOT READY"));
+// ================= START =================
+app.listen(PORT, () =>
+  console.log("🔥 FULL STOCK BOT RUNNING")
+);
