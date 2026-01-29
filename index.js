@@ -1,174 +1,171 @@
+// ================= BASIC =================
 const express = require("express");
-const line = require("@line/bot-sdk");
 const axios = require("axios");
 const cheerio = require("cheerio");
+const line = require("@line/bot-sdk");
 const fs = require("fs");
 
 const app = express();
 app.use(express.json());
 
-// ================= CONFIG =================
 const PORT = process.env.PORT || 3000;
 const LINE_TOKEN = process.env.LINE_TOKEN;
 
-if (!LINE_TOKEN) {
-  console.error("❌ ไม่พบ LINE_TOKEN");
-  process.exit(1);
-}
+const client = new line.Client({ channelAccessToken: LINE_TOKEN });
 
-const client = new line.Client({
-  channelAccessToken: LINE_TOKEN
-});
+// ================= FILES =================
+const GROUP_FILE = "./groups.json";
+const CLIENT_FILE = "./clients.json"; // ระบบเช่า + คิดเงิน
 
-// ================= UTIL =================
-const readJSON = (path, def = []) =>
-  fs.existsSync(path) ? JSON.parse(fs.readFileSync(path)) : def;
+const readJSON = (p, d) => fs.existsSync(p) ? JSON.parse(fs.readFileSync(p)) : d;
+const writeJSON = (p, d) => fs.writeFileSync(p, JSON.stringify(d, null, 2));
 
-const writeJSON = (path, data) =>
-  fs.writeFileSync(path, JSON.stringify(data, null, 2));
+// ================= TIME =================
+const nowTime = () => new Date().toTimeString().slice(0,5);
 
-// ================= MARKETS =================
-// 🔧 แก้เวลาได้ตามต้องการ (เวลาไทย)
+// ================= MARKETS (ทั้งหมด) =================
 const MARKETS = [
-  {
-    name: "🇯🇵 นิเคอิเช้า vip",
-    time: "09:05",
-    url: "https://www.investing.com/indices/japan-ni225",
-    selector: '[data-test="instrument-price-last"]'
-  },
-  {
-    name: "🇯🇵 นิเคอิ vip",
-    time: "09:30",
-    url: "https://www.investing.com/indices/japan-ni225",
-    selector: '[data-test="instrument-price-last"]'
-  },
-  {
-    name: "🇨🇳 จีนเช้า vip",
-    time: "10:05",
-    url: "https://www.investing.com/indices/china-a50",
-    selector: '[data-test="instrument-price-last"]'
-  }
+  // ===== ญี่ปุ่น =====
+  { name:"🇯🇵 นิเคอิเช้า", session:"morning", open:"09:00", close:"09:10", result:"09:05", url:"https://www.investing.com/indices/japan-ni225", selector:'[data-test="instrument-price-last"]' },
+  { name:"🇯🇵 นิเคอิบ่าย", session:"afternoon", open:"14:25", close:"14:35", result:"14:30", url:"https://www.investing.com/indices/japan-ni225", selector:'[data-test="instrument-price-last"]' },
+
+  // ===== จีน =====
+  { name:"🇨🇳 จีนเช้า", session:"morning", open:"10:00", close:"10:10", result:"10:05", url:"https://www.investing.com/indices/china-a50", selector:'[data-test="instrument-price-last"]' },
+  { name:"🔥 จีน A50 VIP", session:"vip", open:"10:00", close:"10:10", result:"10:05", url:"https://www.investing.com/indices/china-a50", selector:'[data-test="instrument-price-last"]' },
+
+  // ===== ฮ่องกง =====
+  { name:"🇭🇰 ฮั่งเส็งเช้า", session:"morning", open:"11:00", close:"11:10", result:"11:05", url:"https://www.investing.com/indices/hang-sen-40", selector:'[data-test="instrument-price-last"]' },
+  { name:"🇭🇰 ฮั่งเส็งบ่าย", session:"afternoon", open:"15:00", close:"15:10", result:"15:05", url:"https://www.investing.com/indices/hang-sen-40", selector:'[data-test="instrument-price-last"]' },
+
+  // ===== ยุโรป =====
+  { name:"🇩🇪 เยอรมัน DAX", session:"afternoon", open:"15:30", close:"15:40", result:"15:35", url:"https://www.investing.com/indices/germany-30", selector:'[data-test="instrument-price-last"]' },
+  { name:"🇬🇧 อังกฤษ FTSE", session:"afternoon", open:"15:00", close:"15:10", result:"15:05", url:"https://www.investing.com/indices/uk-100", selector:'[data-test="instrument-price-last"]' },
+
+  // ===== อเมริกา =====
+  { name:"🇺🇸 ดาวโจนส์", session:"vip", open:"20:30", close:"20:40", result:"20:35", url:"https://www.investing.com/indices/us-30", selector:'[data-test="instrument-price-last"]' },
+  { name:"🇺🇸 NASDAQ", session:"vip", open:"20:30", close:"20:40", result:"20:35", url:"https://www.investing.com/indices/nasdaq-composite", selector:'[data-test="instrument-price-last"]' }
 ];
 
-// ================= FLEX (สไตล์เหมือนภาพ) =================
-function resultFlex(market, time, top, bottom) {
-  return {
-    type: "flex",
-    altText: `[bot] ${market} ${top}-${bottom}`,
-    contents: {
-      type: "bubble",
-      size: "mega",
-      body: {
-        type: "box",
-        layout: "vertical",
-        backgroundColor: "#FFFFFF",
-        paddingAll: "lg",
-        contents: [
-          {
-            type: "text",
-            text: "[bot] ประกาศผล",
-            size: "md",
-            weight: "bold",
-            color: "#000000"
-          },
-          {
-            type: "text",
-            text: market,
-            size: "md",
-            color: "#000000",
-            margin: "sm"
-          },
-          {
-            type: "text",
-            text: `เวลา ${time} น.`,
-            size: "sm",
-            color: "#666666",
-            margin: "sm"
-          },
-          {
-            type: "separator",
-            margin: "md"
-          },
-          {
-            type: "text",
-            text: `${top} - ${bottom}`,
-            size: "xxl",
-            weight: "bold",
-            color: "#000000",
-            align: "center",
-            margin: "lg"
-          }
-        ]
-      }
-    }
-  };
-}
+// ================= UTILS =================
+const isOpen = (now, m) => now >= m.open && now <= m.close;
 
-// ================= FETCH PRICE =================
-async function fetchPrice(url, selector) {
-  try {
-    const res = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      timeout: 15000
-    });
-    const $ = cheerio.load(res.data);
-    const priceText = $(selector).first().text().replace(/,/g, "");
-    return parseFloat(priceText);
-  } catch (err) {
-    console.log("❌ ดึงราคาหุ้นไม่สำเร็จ");
+const convert = txt => {
+  const n = txt.replace(/[^0-9]/g,"");
+  return { top:n.slice(-3), bottom:n.slice(-2) };
+};
+
+async function fetchPrice(url, selector){
+  try{
+    const r = await axios.get(url,{headers:{'User-Agent':'Mozilla/5.0'}});
+    const $ = cheerio.load(r.data);
+    return $(selector).first().text().trim();
+  }catch{
     return null;
   }
 }
 
-// ================= CONVERT TO LOTTERY =================
-function convert(price) {
-  const parts = price.toString().split(".");
-  const top = parts[0].slice(-3);
-  const bottom = (parts[1] || "00").slice(0, 2);
-  return { top, bottom };
-}
-
-// ================= AUTO SEND (แจ้งทีละหวย) =================
-setInterval(async () => {
-  const now = new Date().toTimeString().slice(0, 5);
-
-  for (const m of MARKETS) {
-    if (now === m.time) {
-      const price = await fetchPrice(m.url, m.selector);
-      if (!price) return;
-
-      const { top, bottom } = convert(price);
-      const groups = readJSON("./data/groups.json", []);
-
-      for (const gid of groups) {
-        await client.pushMessage(
-          gid,
-          resultFlex(m.name, now, top, bottom)
-        );
-      }
-
-      console.log(`✅ แจ้งผลแล้ว ${m.name} ${top}-${bottom}`);
+// ================= FLEX =================
+const alertFlex = (title,color) => ({
+  type:"flex",
+  altText:title,
+  contents:{
+    type:"bubble",
+    body:{
+      type:"box",
+      layout:"vertical",
+      backgroundColor:"#000000",
+      contents:[{type:"text",text:title,color,weight:"bold",size:"xl"}]
     }
   }
-}, 60000);
+});
+
+const resultFlex = (session, list) => ({
+  type:"flex",
+  altText:`🔥 ผล${session}`,
+  contents:{
+    type:"bubble",
+    size:"giga",
+    body:{
+      type:"box",
+      layout:"vertical",
+      backgroundColor:"#000000",
+      contents:[
+        {type:"text",text:`🔥 ผลตลาด ${session.toUpperCase()}`,color:"#FF0033",size:"xl",weight:"bold"},
+        ...list.map(i=>({
+          type:"box",layout:"horizontal",contents:[
+            {type:"text",text:i.name,color:"#AAAAAA",flex:3},
+            {type:"text",text:`${i.top}-${i.bottom}`,color:"#00FFAA",weight:"bold",align:"end",flex:2}
+          ]
+        })),
+        {type:"text",text:`⏰ ${nowTime()}`,size:"xs",color:"#666666",align:"end"}
+      ]
+    }
+  }
+});
+
+// ================= SYSTEM =================
+let buffer = {};
+
+setInterval(async()=>{
+  const now = nowTime();
+  const groups = readJSON(GROUP_FILE,[]);
+  const clients = readJSON(CLIENT_FILE,{});
+
+  for(const m of MARKETS){
+
+    // 🔔 แจ้งเปิดตลาด
+    if(now === m.open){
+      for(const g of groups){
+        if(clients[g]?.active)
+          await client.pushMessage(g, alertFlex(`🔔 เปิดตลาด ${m.name}`,"#00FFAA"));
+      }
+    }
+
+    // 🔔 แจ้งปิดตลาด
+    if(now === m.close){
+      for(const g of groups){
+        if(clients[g]?.active)
+          await client.pushMessage(g, alertFlex(`⛔ ปิดตลาด ${m.name}`,"#FF0033"));
+      }
+    }
+
+    // 🎯 ผล
+    if(isOpen(now,m) && now===m.result){
+      const price = await fetchPrice(m.url,m.selector);
+      if(!price) continue;
+      const r = convert(price);
+      if(!buffer[m.session]) buffer[m.session]=[];
+      buffer[m.session].push({name:m.name,...r});
+    }
+  }
+
+  // 📦 ส่งผลรวม + ตรวจวันหมดอายุ
+  for(const s in buffer){
+    for(const g of groups){
+      const c = clients[g];
+      if(!c || !c.active) continue;
+      if(!c.pack.includes(s)) continue;
+      if(new Date(c.expire) < new Date()){
+        c.active=false;
+        writeJSON(CLIENT_FILE,clients);
+        continue;
+      }
+      await client.pushMessage(g,resultFlex(s,buffer[s]));
+    }
+    buffer[s]=[];
+  }
+},60000);
 
 // ================= WEBHOOK =================
-app.post("/webhook", (req, res) => {
-  req.body.events.forEach(ev => {
-    // บันทึก groupId อัตโนมัติเมื่อบอทถูกเชิญเข้ากลุ่ม
-    if (ev.type === "join" && ev.source.type === "group") {
-      const groups = readJSON("./data/groups.json", []);
-      if (!groups.includes(ev.source.groupId)) {
-        groups.push(ev.source.groupId);
-        writeJSON("./data/groups.json", groups);
-        console.log("➕ บันทึกกลุ่มใหม่แล้ว");
-      }
+app.post("/webhook",(req,res)=>{
+  const groups = readJSON(GROUP_FILE,[]);
+  req.body.events?.forEach(e=>{
+    if(e.source?.groupId && !groups.includes(e.source.groupId)){
+      groups.push(e.source.groupId);
+      writeJSON(GROUP_FILE,groups);
     }
   });
   res.sendStatus(200);
 });
 
-// ================= START =================
-app.listen(PORT, () => {
-  console.log("🔥 บอทแจ้งเตือนออโต้ พร้อมใช้งาน");
-});
+app.listen(PORT,()=>console.log("🔥 FULL STOCK BOT RUNNING"));
