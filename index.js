@@ -159,13 +159,33 @@ setInterval(async()=>{
 // ================= WEBHOOK =================
 app.post("/webhook",(req,res)=>{
   const groups = readJSON(GROUP_FILE,[]);
-  req.body.events?.forEach(e=>{
+
+  req.body.events?.forEach(async e => {
+
+    // ===== เก็บ groupId อัตโนมัติ =====
     if(e.source?.groupId && !groups.includes(e.source.groupId)){
       groups.push(e.source.groupId);
       writeJSON(GROUP_FILE,groups);
+      console.log("➕ บันทึกกลุ่มใหม่", e.source.groupId);
     }
+
+    // ===== คำสั่งแอดมิน /groupid =====
+    if(
+      e.type === "message" &&
+      e.message.type === "text" &&
+      e.message.text.trim() === "/groupid" &&
+      e.source.type === "group"
+    ){
+      await client.replyMessage(e.replyToken,{
+        type:"text",
+        text:`📌 GROUP ID\n${e.source.groupId}`
+      });
+    }
+
   });
+
   res.sendStatus(200);
+});
 });
 
 app.listen(PORT,()=>console.log("🔥 FULL STOCK BOT RUNNING"));
