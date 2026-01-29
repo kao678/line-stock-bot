@@ -157,35 +157,36 @@ setInterval(async()=>{
 },60000);
 
 // ================= WEBHOOK =================
-app.post("/webhook",(req,res)=>{
-  const groups = readJSON(GROUP_FILE,[]);
+app.post("/webhook", async (req, res) => {
+  const groups = readJSON(GROUP_FILE, []);
 
-  req.body.events?.forEach(async e => {
+  for (const e of req.body.events || []) {
 
-    // ===== เก็บ groupId อัตโนมัติ =====
-    if(e.source?.groupId && !groups.includes(e.source.groupId)){
+    // เก็บ groupId อัตโนมัติ
+    if (e.source?.type === "group" && !groups.includes(e.source.groupId)) {
       groups.push(e.source.groupId);
-      writeJSON(GROUP_FILE,groups);
+      writeJSON(GROUP_FILE, groups);
       console.log("➕ บันทึกกลุ่มใหม่", e.source.groupId);
     }
 
-    // ===== คำสั่งแอดมิน /groupid =====
-    if(
+    // คำสั่งแอดมิน /groupid
+    if (
       e.type === "message" &&
       e.message.type === "text" &&
       e.message.text.trim() === "/groupid" &&
       e.source.type === "group"
-    ){
-      await client.replyMessage(e.replyToken,{
-        type:"text",
-        text:`📌 GROUP ID\n${e.source.groupId}`
+    ) {
+      await client.replyMessage(e.replyToken, {
+        type: "text",
+        text: `📌 GROUP ID\n${e.source.groupId}`
       });
     }
-
-  });
+  }
 
   res.sendStatus(200);
 });
 
-app.listen(PORT,()=>console.log("🔥 FULL STOCK BOT RUNNING"));
-);
+// ================= START =================
+app.listen(PORT, () => {
+  console.log("🔥 FULL STOCK BOT RUNNING");
+});
