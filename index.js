@@ -1,172 +1,63 @@
-// ================== CONFIG ==================
-import express from "express";
-import line from "@line/bot-sdk";
-
-const PORT = process.env.PORT || 10000;
-const LINE_TOKEN = process.env.LINE_TOKEN;      // Channel access token
-const LINE_SECRET = process.env.LINE_SECRET;    // Channel secret
-const GROUP_ID = process.env.GROUP_ID;          // groupId ที่จะส่งแจ้งเตือน
-
-if (!LINE_TOKEN || !LINE_SECRET || !GROUP_ID) {
-  console.error("❌ Missing ENV (LINE_TOKEN / LINE_SECRET / GROUP_ID)");
-  process.exit(1);
-}
-
-const client = new line.Client({
-  channelAccessToken: LINE_TOKEN,
-  channelSecret: LINE_SECRET,
-});
+require("dotenv").config();
+const express = require("express");
+const { google } = require("googleapis");
+const cron = require("node-cron");
 
 const app = express();
-app.use(express.json());
+const PORT = process.env.PORT || 3000;
 
-// ================== กันเด้ง ==================
-const lastResults = {}; // { marketKey: "เลขล่าสุด" }
+// ================= GOOGLE SHEET =================
+const SHEET_ID = process.env.GSHEET_ID;
 
-// ================== ตลาด (เพิ่มได้ที่นี่) ==================
-const MARKETS = [
-  {
-    key: "nikkei_morning",
-    title: "ผลหวยหุ้น เช้า",
-    name: "นิเคอิเช้า",
-    url: "https://thederbyapex.com/huay-live/",
-    selector: ".nikkei .result", // ⚠️ ตัวอย่าง selector
-  },
-  {
-    key: "hangseng_morning",
-    title: "ผลหวยหุ้น เช้า",
-    name: "ฮั่งเส็งเช้า",
-    url: "https://thederbyapex.com/huay-live/",
-    selector: ".hangseng .result",
-  },
-  {
-    key: "dowjones_vip",
-    title: "ผลหวยหุ้น VIP",
-    name: "ดาวโจนส์ VIP",
-    url: "https://thederbyapex.com/huay-live/",
-    selector: ".dowjones .result",
-  },
-  {
-    key: "germany_vip",
-    title: "ผลหวยหุ้น VIP",
-    name: "เยอรมัน VIP",
-    url: "https://thederbyapex.com/huay-live/",
-    selector: ".germany .result",
-  },
-];
-
-// ================== ดึงผลจริง ==================
-async function fetchResult(market) {
-  const res = await fetch(market.url, { cache: "no-store" });
-  const html = await res.text();
-
-  // ดึงด้วย selector แบบง่าย (regex fallback)
-  // แนะนำ: ปรับ selector ให้ตรงเว็บจริง
-  const regex = new RegExp(
-    market.selector.replace(".", "\\.") + "[^>]*>(.*?)<",
-    "i"
-  );
-  const match = html.match(regex);
-
-  if (!match) return "รอผล";
-
-  const text = match[1].replace(/\s+/g, " ").trim();
-  return text || "รอผล";
-}
-
-// ================== Flex สีดำ–ทอง ==================
-function resultFlex(title, items) {
-  return {
-    type: "flex",
-    altText: title,
-    contents: {
-      type: "bubble",
-      size: "mega",
-      body: {
-        type: "box",
-        layout: "vertical",
-        backgroundColor: "#000000",
-        contents: [
-          {
-            type: "text",
-            text: `📊 ${title}`,
-            color: "#FFD700",
-            weight: "bold",
-            size: "lg",
-          },
-          { type: "separator", margin: "md", color: "#FFD700" },
-          ...items.map((t) => ({
-            type: "text",
-            text: `• ${t}`,
-            color: "#FFFFFF",
-            margin: "md",
-            size: "md",
-          })),
-          {
-            type: "text",
-            text: "⏰ อัปเดตอัตโนมัติ",
-            color: "#AAAAAA",
-            size: "sm",
-            margin: "lg",
-          },
-        ],
-      },
-    },
-  };
-}
-
-// ================== ตรวจ + ส่ง (กันเด้ง) ==================
-async function checkAndNotify() {
-  const groupsByTitle = {};
-
-  for (const m of MARKETS) {
-    try {
-      const result = await fetchResult(m);
-
-      // ❌ ข้ามรอผล
-      if (!result || result.includes("รอผล")) continue;
-
-      // ❌ กันเด้ง: ถ้าเหมือนเดิม ไม่ส่ง
-      if (lastResults[m.key] === result) continue;
-
-      // ✅ บันทึกผลใหม่
-      lastResults[m.key] = result;
-
-      if (!groupsByTitle[m.title]) groupsByTitle[m.title] = [];
-      groupsByTitle[m.title].push(`${m.name} : ${result}`);
-    } catch (e) {
-      console.error("❌ Error", m.name, e.message);
-    }
-  }
-
-  // ส่ง Flex แยกตามหัวข้อ (เช้า / VIP)
-  for (const title of Object.keys(groupsByTitle)) {
-    const flex = resultFlex(title, groupsByTitle[title]);
-    await client.pushMessage(GROUP_ID, flex);
-  }
-}
-
-// ================== ตั้งเวลาออโต้ ==================
-// เช็คทุก 1 นาที (ปลอดภัย + ไม่เด้ง)
-setInterval(checkAndNotify, 60 * 1000);
-
-// ================== Webhook (ใช้ /groupid ได้) ==================
-app.post("/webhook", async (req, res) => {
-  for (const e of req.body.events || []) {
-    if (
-      e.type === "message" &&
-      e.message.type === "text" &&
-      e.message.text.trim() === "/groupid" &&
-      e.source.type === "group"
-    ) {
-      await client.replyMessage(e.replyToken, {
-        type: "text",
-        text: `📌 GROUP ID\n${e.source.groupId}`,
-      });
-    }
-  }
-  res.sendStatus(200);
+const auth = new google.auth.GoogleAuth({
+  keyFile: "./service-account.json",
+  scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
 });
 
-app.get("/", (req, res) => res.send("BOT ONLINE"));
-app.listen(PORT, () => console.log("🔥 BOT RUNNING"));
+const sheets = google.sheets({ version: "v4", auth });
+
+// ================= READ SHEET =================
+async function readSheet() {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: "Sheet1!A2:C",
+  });
+
+  return res.data.values || [];
+}
+
+// ================= REPORT =================
+async function reportLotto() {
+  try {
+    const rows = await readSheet();
+
+    if (!rows.length) {
+      console.log("❌ ไม่มีข้อมูลในชีต");
+      return;
+    }
+
+    rows.forEach(row => {
+      const [name, result, time] = row;
+      console.log(`🎯 ${name} | ${result} | ${time}`);
+    });
+
+  } catch (err) {
+    console.error("❌ ERROR:", err.message);
+  }
+}
+
+// ================= CRON (ออโต้) =================
+// ทุกวัน 16:30
+cron.schedule("30 16 * * *", () => {
+  console.log("⏰ AUTO REPORT");
+  reportLotto();
+});
+
+// ================= SERVER =================
+app.get("/", (req, res) => {
+  res.send("LOTTO BOT RUNNING ✅");
+});
+
+app.listen(PORT, () => {
+  console.log("🚀 Server started on", PORT);
+});
