@@ -1,63 +1,36 @@
-require("dotenv").config();
-const express = require("express");
-const { google } = require("googleapis");
-const cron = require("node-cron");
+require('dotenv').config()
+const express = require('express')
+const line = require('@line/bot-sdk')
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+const app = express()
+const PORT = process.env.PORT || 3000
 
-// ================= GOOGLE SHEET =================
-const SHEET_ID = process.env.GSHEET_ID;
-
-const auth = new google.auth.GoogleAuth({
-  keyFile: "./service-account.json",
-  scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
-});
-
-const sheets = google.sheets({ version: "v4", auth });
-
-// ================= READ SHEET =================
-async function readSheet() {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: "Sheet1!A2:C",
-  });
-
-  return res.data.values || [];
+const config = {
+  channelSecret: process.env.CHANNEL_SECRET,
+  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN
 }
 
-// ================= REPORT =================
-async function reportLotto() {
-  try {
-    const rows = await readSheet();
+const client = new line.Client(config)
 
-    if (!rows.length) {
-      console.log("❌ ไม่มีข้อมูลในชีต");
-      return;
-    }
+// ===== WEBHOOK =====
+app.post('/webhook', line.middleware(config), async (req, res) => {
+  for (const event of req.body.events) {
+    if (event.type !== 'message' || event.message.type !== 'text') continue
 
-    rows.forEach(row => {
-      const [name, result, time] = row;
-      console.log(`🎯 ${name} | ${result} | ${time}`);
-    });
-
-  } catch (err) {
-    console.error("❌ ERROR:", err.message);
+    // ✅ ตอบทุกข้อความ (ทดสอบ)
+    await client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '🤖 บอทออนไลน์แล้ว'
+    })
   }
-}
+  res.end()
+})
 
-// ================= CRON (ออโต้) =================
-// ทุกวัน 16:30
-cron.schedule("30 16 * * *", () => {
-  console.log("⏰ AUTO REPORT");
-  reportLotto();
-});
-
-// ================= SERVER =================
-app.get("/", (req, res) => {
-  res.send("LOTTO BOT RUNNING ✅");
-});
+// ===== ROOT =====
+app.get('/', (req, res) => {
+  res.send('BOT RUNNING')
+})
 
 app.listen(PORT, () => {
-  console.log("🚀 Server started on", PORT);
-});
+  console.log('Server started on', PORT)
+})
