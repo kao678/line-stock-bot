@@ -1,15 +1,13 @@
 {
-  "name": "line-lotto-bot",
+  "name": "share-bot",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
+    "@line/bot-sdk": "^9.0.0",
     "express": "^4.18.2",
-    "@line/bot-sdk": "^9.5.0",
-    "googleapis": "^133.0.0",
-    "node-cron": "^3.0.3",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.3.1"
   }
 }
